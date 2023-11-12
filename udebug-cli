@@ -1,0 +1,279 @@
+#!/usr/bin/env ucode
+'use strict';
+import { basename } from "fs";
+let udebug = require("udebug");
+let uloop = require("uloop");
+let libubus = require("ubus");
+uloop.init();
+let ubus = libubus.connect();
+
+let opts = {
+	select: []
+};
+
+const usage_message = `
+Usage: ${basename(sourcepath())} [<options>] <command> [<args>]
+
+  Options:
+    -f				Ignore errors on opening rings
+    -d <duration>:		Only fetch data up to <duration> seconds old
+    -o <file>|-			Set output file for snapshot/stream (or '-' for stdout)
+    -i <process>[:<name>]	Select debug buffer for snapshot/stream
+    -s <path>			Use udebug socket <path>
+    -q				Suppress warnings/error messages
+
+  Commands:
+    list:			List available debug buffers
+    snapshot:			Create a pcapng snapshot of debug buffers
+    set_flag [<name>=0|1 ...]	Set ring buffer flags
+    get_flags			Get ring buffer flags
+
+`;
+
+function _warn(str) {
+	if (opts.quiet)
+		return;
+
+	warn(str);
+}
+
+function usage() {
+	warn(usage_message);
+	exit(1);
+}
+
+while (substr(ARGV[0], 0, 1) == "-") {
+	let opt = substr(shift(ARGV), 1);
+	switch(opt) {
+	case 'd':
+		opts.duration = 1.0 * shift(ARGV);
+		break;
+	case 's':
+		opts.socket = shift(ARGV);
+		break;
+	case 'i':
+		push(opts.select, shift(ARGV));
+		break;
+	case 'o':
+		opts.output_file = shift(ARGV);
+		break;
+	case 'q':
+		opts.quiet = true;
+		break;
+	case 'f':
+		opts.force = true;
+		break;
+	default:
+		usage();
+	}
+}
+
+let procs = {};
+let selected = [];
+let rings = {};
+let subscriber;
+let pcap;
+
+function ring_selected(ring) {
+	if (!length(opts.select))
+		return true;
+
+	for (let sel in opts.select) {
+		let match = split(sel, ":", 2);
+		if (wildcard(ring.proc_name, match[0]) &&
+		    (!match[1] || wildcard(ring.ring_name, match[1])))
+			return true;
+	}
+
+	return false;
+}
+
+function poll_data() {
+	let data = [];
+	for (let ring_id in rings) {
+		let ring = rings[ring_id];
+		let s = ring[1].fetch();
+		if (s)
+			push(data, s);
+	}
+	if (length(data) > 0)
+		pcap.write(data);
+}
+
+function open_ring(ring, poll) {
+	let ring_name =` ${ring.proc_name}:${ring.ring_name}`;
+	let ref = udebug.get_ring(ring);
+
+	if (!ref)
+		return null;
+	if (opts.duration)
+		ref.set_fetch_duration(opts.duration);
+	if (poll)
+		ref.set_poll_cb(() => { poll_data() });
+
+	let ring_id = ring.id + "";
+	ring = [ ring_name, ref ];
+	rings[ring_id] = ring;
+
+	return ring;
+}
+
+function open_output() {
+	if (!opts.output_file) {
+		_warn(`No output file\n`);
+		exit(1);
+	}
+	let out = opts.output_file;
+	if (out == "-")
+		out = null;
+
+	pcap = udebug.pcap_file(out);
+	if (!pcap) {
+		_warn(`Failed to open output\n`);
+		exit(1);
+	}
+}
+
+let cmds = {
+	list: function() {
+		for (let proc in procs) {
+		    print(`Process ${proc}:\n`);
+		    for (let ring in procs[proc])
+			print(`  - ${ring.ring_name}\n`);
+		}
+	},
+	snapshot: function() {
+		open_output();
+
+		if (!length(selected)) {
+			_warn(`No available debug buffers\n`);
+			exit(1);
+		}
+
+		for (let ring in selected) {
+			if (!open_ring(ring)) {
+				_warn(`Failed to open ring ${ring_name}\n`);
+				if (opts.force)
+					continue;
+
+				exit(1);
+			}
+		}
+
+		poll_data();
+		pcap.close();
+	},
+	set_flag: function() {
+		for (let ring in selected) {
+			if (!length(ring.flags))
+				continue;
+
+			let mask = 0, set = 0;
+			for (let flag in ring.flags) {
+				for (let change in ARGV) {
+					change = split(change, "=", 2);
+					let name = change[0];
+					let val = !!int(change[1]);
+					if (flag[0] == name)
+						if (val)
+							set |= flag[1];
+						else
+							mask |= flag[1];
+				}
+			}
+
+			if (!(mask | set))
+				continue;
+
+			let r = open_ring(ring);
+			if (!r)
+				continue;
+
+			r[1].change_flags(mask, set);
+		}
+	},
+	get_flags: function() {
+		for (let ring in selected) {
+			if (!length(ring.flags))
+				continue;
+
+			let r = open_ring(ring);
+			if (!r)
+				continue;
+
+			print(`${r[0]}\n`);
+			let flags = r[1].get_flags();
+			for (let flag in ring.flags)
+				print(`\t${flag[0]}=${((flags & flag[1]) == flag[1]) ? 1 : 0 }\n`);
+		}
+	},
+	stream: function() {
+		open_output();
+
+		subscriber = ubus.subscriber((req) => {
+			let type = req.type;
+			let ring = req.data;
+			let ring_id = ring.id + "";
+			if (type == "remove") {
+				ring = rings[ring_id];
+				if (!ring)
+					return;
+
+				ring[1].close();
+				delete rings[ring_id];
+			} else if (type == "add") {
+				open_ring(ring, true);
+				poll_data();
+			}
+		});
+		subscriber.subscribe("udebug");
+		for (let ring in selected) {
+			if (!open_ring(ring, true)) {
+				_warn(`Failed to open ring ${ring_name}\n`);
+				if (opts.force)
+					continue;
+
+				exit(1);
+			}
+		}
+
+		let done = () => { uloop.done(); };
+		signal('SIGINT', done);
+		signal('SIGTERM', done);
+
+		poll_data();
+		delete opts.duration;
+		uloop.run();
+	}
+};
+
+let cmd = shift(ARGV);
+if (!cmds[cmd])
+	usage();
+
+let ring_list = ubus.call("udebug", "list");
+if (!ring_list || !ring_list.results) {
+	warn("Failed to get ring buffer list from udebugd\n");
+	exit(1);
+}
+
+ring_list = ring_list.results;
+for (let ring in ring_list) {
+	if (!ring_selected(ring))
+		continue;
+
+	let proc = procs[ring.proc_name];
+	if (!proc) {
+	    proc = [];
+	    procs[ring.proc_name] = proc;
+	}
+	push(proc, ring);
+	push(selected, ring);
+}
+
+if (cmd != "list" && !udebug.init(opts.socket)) {
+	_warn(`Failed to connect to udebug socket\n`);
+	exit(1);
+}
+
+cmds[cmd]();
