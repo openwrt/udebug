@@ -152,7 +152,7 @@ let cmds = {
 
 		for (let ring in selected) {
 			if (!open_ring(ring)) {
-				_warn(`Failed to open ring ${ring_name}\n`);
+				_warn(`Failed to open ring ${ring.proc_name}:${ring.ring_name}\n`);
 				if (opts.force)
 					continue;
 
