@@ -713,7 +713,7 @@ void __udebug_disconnect(struct udebug *ctx, bool reconnect)
 	close(ctx->fd.fd);
 	ctx->fd.fd = -1;
 	ctx->poll_handle = -1;
-	if (ctx->reconnect.cb)
+	if (ctx->reconnect.cb && reconnect)
 		uloop_timeout_set(&ctx->reconnect, 1);
 }
 
@@ -726,6 +726,7 @@ void udebug_free(struct udebug *ctx)
 	ctx->socket_path = NULL;
 
 	__udebug_disconnect(ctx, false);
+	uloop_timeout_cancel(&ctx->reconnect);
 
 	while (!list_empty(&ctx->local_rings)) {
 		buf = list_first_entry(&ctx->local_rings, struct udebug_buf, list);
