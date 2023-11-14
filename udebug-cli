@@ -46,7 +46,7 @@ while (substr(ARGV[0], 0, 1) == "-") {
 	let opt = substr(shift(ARGV), 1);
 	switch(opt) {
 	case 'd':
-		opts.duration = 1.0 * shift(ARGV);
+		opts.duration = +shift(ARGV);
 		break;
 	case 's':
 		opts.socket = shift(ARGV);
