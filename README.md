@@ -106,6 +106,8 @@ Usage: udebug-cli [<options>] <command> [<args>]
   Commands:
     list:                       List available debug buffers
     snapshot:                   Create a pcapng snapshot of debug buffers
+    set_flag [<name>=0|1 ...]   Set ring buffer flags
+    get_flags                   Get ring buffer flags
 
 ```
 
