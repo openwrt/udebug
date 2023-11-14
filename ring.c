@@ -81,5 +81,6 @@ void client_ring_free(struct client_ring *r)
 	udebug_ubus_ring_notify(r, false);
 	avl_delete(&rings, &r->node);
 	list_del(&r->list);
+	close(r->fd);
 	free(r);
 }
