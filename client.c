@@ -224,12 +224,12 @@ static void client_fd_cb(struct uloop_fd *fd, unsigned int events)
 	pfd = (int *)CMSG_DATA(cmsg);
 	msg.msg_controllen = cmsg->cmsg_len;
 
+retry:
 	if (fd->eof) {
 		client_free(cl);
 		return;
 	}
 
-retry:
 	iov.iov_base = &cl->rx_buf;
 	iov.iov_len = min_sz;
 	if (!cl->rx_ofs) {
@@ -239,6 +239,8 @@ retry:
 		len = recvmsg(fd->fd, &msg, 0);
 		if (len < 0)
 			return;
+		if (!len)
+			fd->eof = true;
 
 		cl->rx_ofs = len;
 		cl->rx_fd = *pfd;
