@@ -525,7 +525,7 @@ void udebug_buf_free(struct udebug_buf *buf)
 	if (ctx && ctx->fd.fd >= 0)
 		udebug_buf_msg(buf, CL_MSG_RING_REMOVE);
 
-	munmap(buf->hdr, buf->head_size + buf->data_size);
+	munmap(buf->hdr, buf->head_size + 2 * buf->data_size);
 	close(buf->fd);
 	memset(buf, 0, sizeof(*buf));
 }
