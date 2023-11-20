@@ -22,7 +22,8 @@ static uint32_t gen_ring_id(void)
 	if (!urandom && (urandom = fopen("/dev/urandom", "r")) == NULL)
 		return 0;
 
-	fread(&val, sizeof(val), 1, urandom);
+	if (fread(&val, sizeof(val), 1, urandom) != 1)
+		return 0;
 
 	return val;
 }
