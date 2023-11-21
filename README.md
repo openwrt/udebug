@@ -6,6 +6,13 @@ Through the CLI, you can either create snapshots of data with a specific duratio
 or stream data in real time. The data itself is stored in .pcapng files, which can
 contain a mix of packets and log messages.
 
+## Notes on using Wireshark
+
+In order to parse log messages in .pcapng files, you need to change the Wireshark
+configuration.
+Under `Preferences` -> `Protocols` -> `DLT_USER` -> `Encapsulations Table`,
+add an entry for `User 0 (DLT=147)` with Payload protocol `syslog`.
+
 ## libudebug C API
 
 #### `void udebug_init(struct udebug *ctx)`
