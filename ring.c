@@ -64,6 +64,7 @@ struct client_ring *client_ring_alloc(struct client *cl)
 	r->cl = cl;
 	r->id = msg->id;
 	r->fd = cl->rx_fd;
+	cl->rx_fd = -1;
 	r->ring_size = msg->ring_size;
 	r->data_size = msg->data_size;
 	list_add_tail(&r->list, &cl->bufs);

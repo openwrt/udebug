@@ -199,6 +199,12 @@ static void client_parse_message(struct client *cl)
 		DC(3, cl, "Invalid message type %d", msg->type);
 		break;
 	}
+
+	if (cl->rx_fd < 0)
+		return;
+
+	close(cl->rx_fd);
+	cl->rx_fd = -1;
 }
 
 static void client_fd_cb(struct uloop_fd *fd, unsigned int events)
@@ -225,6 +231,7 @@ static void client_fd_cb(struct uloop_fd *fd, unsigned int events)
 	msg.msg_controllen = cmsg->cmsg_len;
 
 retry:
+	*pfd = -1;
 	if (fd->eof) {
 		client_free(cl);
 		return;
