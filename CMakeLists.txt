@@ -15,14 +15,14 @@ IF(APPLE)
   SET(UCODE_MODULE_LINK_OPTIONS "LINKER:-undefined,dynamic_lookup")
 ENDIF()
 
-ADD_LIBRARY(udebug SHARED lib.c lib-pcap.c lib-remote.c)
+ADD_LIBRARY(udebug SHARED lib.c lib-pcap.c)
 IF(ABIVERSION)
   SET_TARGET_PROPERTIES(udebug PROPERTIES VERSION ${ABIVERSION})
 ENDIF()
-TARGET_LINK_LIBRARIES(udebug ubox)
+TARGET_LINK_LIBRARIES(udebug ${ubox} ${ubus})
 
 ADD_EXECUTABLE(udebugd main.c client.c ring.c ubus.c)
-TARGET_LINK_LIBRARIES(udebugd udebug ubox ${ubus})
+TARGET_LINK_LIBRARIES(udebugd udebug ${ubox} ${ubus})
 
 ADD_LIBRARY(ucode_lib MODULE lib-ucode.c)
 SET_TARGET_PROPERTIES(ucode_lib PROPERTIES OUTPUT_NAME udebug PREFIX "")

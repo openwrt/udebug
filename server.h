@@ -4,7 +4,9 @@
 #include <libubox/list.h>
 #include <libubox/uloop.h>
 #include <libubox/avl.h>
-#include "priv.h"
+#include <libubox/blobmsg.h>
+#include <libubox/udebug.h>
+#include <libubox/udebug-proto.h>
 
 extern int debug_level;
 

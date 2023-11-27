@@ -3,8 +3,9 @@
 #include <string.h>
 #include <libubox/utils.h>
 #include <libubox/blobmsg.h>
+#include <libubox/udebug.h>
+#include <libubox/udebug-proto.h>
 #include "udebug-pcap.h"
-#include "priv.h"
 
 static char pcap_buf[65536];
 static struct pcap_block_hdr *pcap_hdr = (struct pcap_block_hdr *)pcap_buf;

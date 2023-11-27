@@ -1,8 +1,8 @@
 #include <math.h>
 #include <libubox/utils.h>
 #include <libubox/usock.h>
+#include <libubox/udebug.h>
 #include <ucode/module.h>
-#include "udebug.h"
 #include "udebug-pcap.h"
 
 static uc_resource_type_t *rbuf_type, *wbuf_type, *snapshot_type, *pcap_type;

@@ -2,7 +2,7 @@
 #define __UDEBUG_PCAP_H
 
 #include <libubox/blobmsg.h>
-#include "udebug.h"
+#include <libubox/udebug.h>
 
 struct pcap_context {
 	uint32_t iface_id;
