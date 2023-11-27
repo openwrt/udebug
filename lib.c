@@ -37,7 +37,11 @@ static void __randname(char *template)
 int udebug_id_cmp(const void *k1, const void *k2, void *ptr)
 {
 	uint32_t id1 = (uint32_t)(uintptr_t)k1, id2 = (uint32_t)(uintptr_t)k2;
-	return id1 - id2;
+	if (id1 < id2)
+		return -1;
+	else if (id1 > id2)
+		return 1;
+	return 0;
 }
 
 static inline int
