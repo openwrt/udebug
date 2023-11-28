@@ -52,14 +52,29 @@ static bool
 udebug_ubus_new_obj_cb(struct ubus_context *ubus, struct ubus_subscriber *sub,
 		       const char *path)
 {
-	return !strcmp(path, "udebug");
+	struct udebug_ubus *ctx = container_of(sub, struct udebug_ubus, sub);
+
+	if (strcmp(path, "udebug") != 0)
+		return false;
+
+	uloop_timeout_set(&ctx->t, 1);
+	return true;
+}
+
+static void udebug_ubus_get_config(struct uloop_timeout *t)
+{
+	struct udebug_ubus *ctx = container_of(t, struct udebug_ubus, t);
+	uint32_t id;
+
+	if (ubus_lookup_id(ctx->ubus, "udebug", &id))
+		return;
+
+	ubus_invoke(ctx->ubus, id, "get_config", NULL, udebug_ubus_req_cb, ctx, 1000);
 }
 
 void udebug_ubus_init(struct udebug_ubus *ctx, struct ubus_context *ubus,
 		      const char *service, udebug_config_cb cb)
 {
-	uint32_t id;
-
 	ctx->ubus = ubus;
 	ctx->service = service;
 	ctx->cb = cb;
@@ -67,11 +82,7 @@ void udebug_ubus_init(struct udebug_ubus *ctx, struct ubus_context *ubus,
 	ctx->sub.cb = udebug_ubus_notify_cb;
 	ubus_register_subscriber(ubus, &ctx->sub);
 
-	if (ubus_lookup_id(ubus, "udebug", &id))
-		return;
-
-	ubus_subscribe(ubus, &ctx->sub, id);
-	ubus_invoke(ubus, id, "get_config", NULL, udebug_ubus_req_cb, ctx, 1000);
+	ctx->t.cb = udebug_ubus_get_config;
 }
 
 void udebug_ubus_free(struct udebug_ubus *ctx)
@@ -79,5 +90,6 @@ void udebug_ubus_free(struct udebug_ubus *ctx)
 	if (!ctx->ubus)
 		return;
 
+	uloop_timeout_cancel(&ctx->t);
 	ubus_unregister_subscriber(ctx->ubus, &ctx->sub);
 }

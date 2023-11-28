@@ -6,6 +6,7 @@ typedef void (*udebug_config_cb)(struct udebug_ubus *ctx, struct blob_attr *data
 
 struct udebug_ubus {
 	struct ubus_context *ubus;
+	struct uloop_timeout t;
 	const char *service;
 	struct ubus_subscriber sub;
 	udebug_config_cb cb;
