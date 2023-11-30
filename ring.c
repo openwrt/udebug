@@ -44,8 +44,10 @@ struct client_ring *client_ring_alloc(struct client *cl)
 	struct client_ring *r;
 	size_t meta_len;
 
-	if (cl->rx_fd < 0)
+	if (cl->rx_fd < 0) {
+		DC(2, cl, "missing file descriptor");
 		return NULL;
+	}
 
 	meta_len = blob_pad_len(&cl->rx_buf.data);
 	r = calloc_a(sizeof(*r), &meta, meta_len);
@@ -53,6 +55,7 @@ struct client_ring *client_ring_alloc(struct client *cl)
 
 	blobmsg_parse_attr(policy, __RING_ATTR_MAX, tb, meta);
 	if (!tb[RING_ATTR_NAME]) {
+		DC(2, cl, "missing ring name");
 		close(cl->rx_fd);
 		free(r);
 		return NULL;
