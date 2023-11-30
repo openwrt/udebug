@@ -170,6 +170,7 @@ static void client_parse_message(struct client *cl)
 	switch (msg->type) {
 	case CL_MSG_RING_ADD:
 		client_ring_alloc(cl);
+		client_send_msg(cl, msg, -1);
 		break;
 	case CL_MSG_RING_REMOVE:
 		DC(2, cl, "delete ring %x", msg->id);
@@ -178,6 +179,7 @@ static void client_parse_message(struct client *cl)
 			client_ring_free(r);
 		else
 			DC(2, cl, "ring not found");
+		client_send_msg(cl, msg, -1);
 		break;
 	case CL_MSG_RING_NOTIFY:
 		DC(3, cl, "notify on ring %d", msg->id);
