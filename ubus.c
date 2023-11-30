@@ -79,6 +79,8 @@ udebug_list_add_ring_data(struct client_ring *r)
 	blobmsg_add_string(&b, "ring_name", r->name);
 	blobmsg_add_u32(&b, "pid", r->cl->pid);
 	blobmsg_add_u32(&b, "uid", r->cl->uid);
+	blobmsg_add_u32(&b, "ring_size", r->ring_size);
+	blobmsg_add_u32(&b, "data_size", r->data_size);
 	if (r->flags)
 		blobmsg_add_blob(&b, r->flags);
 }
