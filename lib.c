@@ -150,6 +150,27 @@ void udebug_ubus_apply_config(struct udebug *ud, struct udebug_ubus_ring *rings,
 	}
 }
 
+void udebug_netlink_msg(struct udebug_buf *buf, uint16_t proto, const void *data, size_t len)
+{
+	struct {
+		uint16_t pkttype;
+		uint16_t arphdr;
+		uint16_t _pad[5];
+		uint16_t proto;
+	} hdr = {
+		.arphdr = cpu_to_be16(824),
+		.proto = cpu_to_be16(proto),
+	};
+
+	if (!udebug_buf_valid(buf))
+		return;
+
+	udebug_entry_init(buf);
+	udebug_entry_append(buf, &hdr, sizeof(hdr));
+	udebug_entry_append(buf, data, len);
+	udebug_entry_add(buf);
+}
+
 void udebug_ubus_init(struct udebug_ubus *ctx, struct ubus_context *ubus,
 		      const char *service, udebug_config_cb cb)
 {

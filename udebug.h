@@ -19,6 +19,8 @@ struct udebug_ubus {
 	udebug_config_cb cb;
 };
 
+void udebug_netlink_msg(struct udebug_buf *buf, uint16_t proto, const void *data, size_t len);
+
 void udebug_ubus_init(struct udebug_ubus *ctx, struct ubus_context *ubus,
 		      const char *service, udebug_config_cb cb);
 void udebug_ubus_ring_init(struct udebug *ud, struct udebug_ubus_ring *ring);
