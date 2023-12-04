@@ -120,7 +120,7 @@ void udebug_ubus_apply_config(struct udebug *ud, struct udebug_ubus_ring *rings,
 
 		blobmsg_parse_attr(policy, __CFG_ATTR_MAX, tb, data);
 
-		if ((cur = tb[CFG_ATTR_ENABLE]) != NULL)
+		if (enabled && (cur = tb[CFG_ATTR_ENABLE]) != NULL)
 			cur_enabled = !!atoi(blobmsg_get_string(cur));
 
 		if ((cur = tb[CFG_ATTR_SIZE]) != NULL)
