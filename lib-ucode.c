@@ -274,16 +274,32 @@ uc_udebug_pcap_init(struct uc_pcap *p, uc_value_t *args)
 }
 
 static void
+write_retry(int fd, const void *data, size_t len)
+{
+	do {
+		ssize_t cur;
+
+		cur = write(fd, data, len);
+		if (cur < 0) {
+			if (errno == EINTR)
+				continue;
+
+			return;
+		}
+
+		data += cur;
+		len -= cur;
+	} while (len > 0);
+}
+
+static void
 uc_udebug_pcap_write_block(struct uc_pcap *p)
 {
 	size_t len;
 	void *data;
-	int ret;
 
 	data = pcap_block_get(&len);
-	do {
-		ret = write(p->fd, data, len);
-	} while (ret < 0 && errno == EINTR);
+	write_retry(p->fd, data, len);
 }
 
 static uc_value_t *
