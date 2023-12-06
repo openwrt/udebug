@@ -327,7 +327,10 @@ uc_udebug_pcap_file(uc_vm_t *vm, size_t nargs)
 
 	if (ucv_type(file) == UC_STRING) {
 		fd = open(ucv_string_get(file), O_WRONLY | O_CREAT, 0644);
-		ftruncate(fd, 0);
+		if (ftruncate(fd, 0) < 0) {
+			close(fd);
+			return NULL;
+		}
 	} else if (!file)
 		fd = STDOUT_FILENO;
 
