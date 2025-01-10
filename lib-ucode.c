@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <math.h>
 #include <libubox/utils.h>
 #include <libubox/usock.h>
