@@ -96,8 +96,10 @@ function poll_data() {
 		if (s)
 			push(data, s);
 	}
-	if (length(data) > 0)
-		pcap.write(data);
+	if (length(data) > 0) {
+		if (pcap.write(data) == null)
+			uloop.end();
+	}
 }
 
 function open_ring(ring, poll) {
