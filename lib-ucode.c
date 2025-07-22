@@ -484,7 +484,7 @@ uc_udebug_foreach_packet(uc_vm_t *vm, size_t nargs)
 static uc_value_t *
 uc_udebug_create_ring(uc_vm_t *vm, size_t nargs)
 {
-	uc_value_t *name, *flags_arr, *size, *entries;
+	uc_value_t *name, *flags_arr, *size, *entries, *format;
 	uc_value_t *meta_obj = uc_fn_arg(0);
 	struct udebug_buf_flag *flags;
 	struct udebug_buf_meta *meta;
@@ -523,6 +523,12 @@ uc_udebug_create_ring(uc_vm_t *vm, size_t nargs)
 	meta->name = strcpy(name_buf, ucv_string_get(name));
 	meta->format = UDEBUG_FORMAT_STRING;
 	meta->flags = flags;
+
+	format = ucv_object_get(meta_obj, "format", NULL);
+	if (ucv_type(format) == UC_INTEGER) {
+		meta->format = UDEBUG_FORMAT_PACKET;
+		meta->sub_format = ucv_int64_get(format);
+	}
 
 	for (size_t i = 0; i < flags_len; i++) {
 		uc_value_t *f = ucv_array_get(flags_arr, i);
@@ -645,6 +651,14 @@ static void rbuf_free(void *ptr)
 void uc_module_init(uc_vm_t *vm, uc_value_t *scope)
 {
 	uc_function_list_register(scope, global_fns);
+
+#define ADD_CONST(name) \
+	ucv_object_add(scope, #name, ucv_int64_new(UDEBUG_##name))
+	ADD_CONST(DLT_ETHERNET);
+	ADD_CONST(DLT_PPP);
+	ADD_CONST(DLT_IEEE_802_11);
+	ADD_CONST(DLT_IEEE_802_11_RADIOTAP);
+	ADD_CONST(DLT_NETLINK);
 
 	uc_type_declare(vm, "udebug.wbuf", wbuf_fns, wbuf_free);
 	uc_type_declare(vm, "udebug.rbuf", rbuf_fns, rbuf_free);
