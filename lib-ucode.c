@@ -6,37 +6,29 @@
 #include <ucode/module.h>
 #include "udebug-pcap.h"
 
-static uc_resource_type_t *rbuf_type, *wbuf_type, *snapshot_type, *pcap_type;
-static uc_value_t *registry;
+static uc_resource_type_t *wbuf_type, *snapshot_type, *pcap_type;
 static struct udebug u;
-static uc_vm_t *_vm;
 
 struct uc_pcap {
 	struct pcap_context pcap;
 	FILE *f;
 };
 
-static size_t add_registry(uc_value_t *val)
-{
-	size_t i = 0;
-
-	while (ucv_array_get(registry, i))
-		i += 2;
-
-	ucv_array_set(registry, i, ucv_get(val));
-
-	return i;
-}
+struct uc_remote_ring {
+	struct udebug_remote_buf rb;
+	struct udebug_packet_info info;
+	uc_vm_t *vm;
+};
 
 static void
 uc_udebug_notify_cb(struct udebug *ctx, struct udebug_remote_buf *rb)
 {
-	uintptr_t idx = (uintptr_t)rb->priv;
+	struct uc_remote_ring *rr = container_of(rb, struct uc_remote_ring, rb);
 	uc_value_t *cb, *this;
-	uc_vm_t *vm = _vm;
+	uc_vm_t *vm = rr->vm;
 
-	this = ucv_array_get(registry, idx);
-	cb = ucv_array_get(registry, idx + 1);
+	this = rb->priv;
+	cb = ucv_resource_value_get(this, 0);
 
 	if (!ucv_is_callable(cb))
 		return;
@@ -71,17 +63,28 @@ uc_udebug_init(uc_vm_t *vm, size_t nargs)
 	return ucv_boolean_new(true);
 }
 
+static struct udebug_remote_buf *
+uc_fn_rbuf(uc_vm_t *vm)
+{
+	struct udebug_remote_buf *rb = uc_fn_thisval("udebug.rbuf");
+
+	if (!rb || !rb->buf.data)
+		return NULL;
+
+	return rb;
+}
+
 static uc_value_t *
 uc_udebug_get_ring(uc_vm_t *vm, size_t nargs)
 {
+	struct uc_remote_ring *rr;
 	struct udebug_remote_buf *rb;
 	struct udebug_packet_info *info;
 	uc_value_t *arg = uc_fn_arg(0);
 	uc_value_t *id, *proc, *name, *pid;
-	int ifname_len, ifdesc_len;
-	char *ifname_buf, *ifdesc_buf;
+	size_t ifname_len, ifdesc_len, len;
+	char *buf;
 	uc_value_t *res;
-	uintptr_t idx;
 
 #define R_IFACE_DESC	"%s:%d"
 
@@ -101,49 +104,38 @@ uc_udebug_get_ring(uc_vm_t *vm, size_t nargs)
 
 	ifname_len = strlen(ucv_string_get(name)) + 1;
 	ifdesc_len = sizeof(R_IFACE_DESC) + strlen(ucv_string_get(proc)) + 10;
-	rb = calloc_a(sizeof(*rb),
-		      &info, sizeof(*info),
-		      &ifname_buf, ifname_len,
-		      &ifdesc_buf, ifdesc_len);
-	rb->meta = info;
+	len = ifname_len + ifdesc_len + sizeof(*rr);
+	res = ucv_resource_create_ex(vm, "udebug.rbuf", (void **)&rr, 1, len);
+	if (!res)
+		return NULL;
 
-	strcpy(ifname_buf, ucv_string_get(name));
-	info->attr[UDEBUG_META_IFACE_NAME] = ifname_buf;
-	snprintf(ifdesc_buf, ifdesc_len, R_IFACE_DESC,
+	rr->vm = vm;
+	rb = &rr->rb;
+	info = &rr->info;
+	rb->meta = info;
+	rb->priv = res;
+	buf = (char *)(rr + 1);
+
+	strcpy(buf, ucv_string_get(name));
+	info->attr[UDEBUG_META_IFACE_NAME] = buf;
+	buf += ifname_len;
+
+	snprintf(buf, ifdesc_len, R_IFACE_DESC,
 	         ucv_string_get(proc), (unsigned int)ucv_int64_get(pid));
-	info->attr[UDEBUG_META_IFACE_DESC] = ifdesc_buf;
+	info->attr[UDEBUG_META_IFACE_DESC] = buf;
 
 	if (udebug_remote_buf_map(&u, rb, (uint32_t)ucv_int64_get(id))) {
-		free(rb);
+		ucv_put(res);
 		return NULL;
 	}
 
-	res = uc_resource_new(rbuf_type, rb);
-	idx = add_registry(res);
-	rb->priv = (void *)idx;
-
 	return res;
-}
-
-static void rbuf_free(void *ptr)
-{
-	struct udebug_remote_buf *rb = ptr;
-	uintptr_t idx;
-
-	if (!rb)
-		return;
-
-	idx = (uintptr_t)rb->priv;
-	ucv_array_set(registry, idx, NULL);
-	ucv_array_set(registry, idx + 1, NULL);
-	udebug_remote_buf_unmap(&u, rb);
-	free(rb);
 }
 
 static uc_value_t *
 uc_udebug_rbuf_fetch(uc_vm_t *vm, size_t nargs)
 {
-	struct udebug_remote_buf *rb = uc_fn_thisval("udebug.rbuf");
+	struct udebug_remote_buf *rb = uc_fn_rbuf(vm);
 	struct udebug_snapshot *s;
 
 	if (!rb)
@@ -159,26 +151,38 @@ uc_udebug_rbuf_fetch(uc_vm_t *vm, size_t nargs)
 static uc_value_t *
 uc_udebug_rbuf_set_poll_cb(uc_vm_t *vm, size_t nargs)
 {
-	struct udebug_remote_buf *rb = uc_fn_thisval("udebug.rbuf");
+	struct udebug_remote_buf *rb = uc_fn_rbuf(vm);
+	uc_value_t *res = _uc_fn_this_res(vm);
 	uc_value_t *val = uc_fn_arg(0);
-	uintptr_t idx;
 
 	if (!rb)
 		return NULL;
 
-	idx = (uintptr_t)rb->priv;
-	ucv_array_set(registry, idx + 1, ucv_get(val));
+	if (val && !ucv_is_callable(val))
+		return NULL;
+
+	ucv_resource_value_set(res, 0, ucv_get(val));
+
+	if (rb->poll == !!val)
+		goto out;
+
 	if (!u.fd.registered)
 		udebug_add_uloop(&u);
-	udebug_remote_buf_set_poll(&u, rb, ucv_is_callable(val));
+	udebug_remote_buf_set_poll(&u, rb, !!val);
+	ucv_resource_persistent_set(res, !!val);
+	if (val)
+		ucv_get(rb->priv);
+	else
+		ucv_put(rb->priv);
 
-	return NULL;
+out:
+	return ucv_boolean_new(true);
 }
 
 static uc_value_t *
 uc_udebug_rbuf_set_fetch_duration(uc_vm_t *vm, size_t nargs)
 {
-	struct udebug_remote_buf *rb = uc_fn_thisval("udebug.rbuf");
+	struct udebug_remote_buf *rb = uc_fn_rbuf(vm);
 	uc_value_t *val = uc_fn_arg(0);
 	uint64_t ts;
 	double t;
@@ -200,7 +204,7 @@ uc_udebug_rbuf_set_fetch_duration(uc_vm_t *vm, size_t nargs)
 static uc_value_t *
 uc_udebug_rbuf_set_fetch_count(uc_vm_t *vm, size_t nargs)
 {
-	struct udebug_remote_buf *rb = uc_fn_thisval("udebug.rbuf");
+	struct udebug_remote_buf *rb = uc_fn_rbuf(vm);
 	uc_value_t *val = uc_fn_arg(0);
 	uint32_t count;
 
@@ -216,7 +220,7 @@ uc_udebug_rbuf_set_fetch_count(uc_vm_t *vm, size_t nargs)
 static uc_value_t *
 uc_udebug_rbuf_change_flags(uc_vm_t *vm, size_t nargs)
 {
-	struct udebug_remote_buf *rb = uc_fn_thisval("udebug.rbuf");
+	struct udebug_remote_buf *rb = uc_fn_rbuf(vm);
 	uc_value_t *mask = uc_fn_arg(0);
 	uc_value_t *set = uc_fn_arg(1);
 
@@ -233,7 +237,8 @@ uc_udebug_rbuf_change_flags(uc_vm_t *vm, size_t nargs)
 static uc_value_t *
 uc_udebug_rbuf_get_flags(uc_vm_t *vm, size_t nargs)
 {
-	struct udebug_remote_buf *rb = uc_fn_thisval("udebug.rbuf");
+	struct udebug_remote_buf *rb = uc_fn_rbuf(vm);
+
 	if (!rb)
 		return NULL;
 
@@ -243,13 +248,10 @@ uc_udebug_rbuf_get_flags(uc_vm_t *vm, size_t nargs)
 static uc_value_t *
 uc_udebug_rbuf_close(uc_vm_t *vm, size_t nargs)
 {
-	void **p = uc_fn_this("udebug.rbuf");
+	struct udebug_remote_buf *rb = uc_fn_rbuf(vm);
 
-	if (!p)
-		return NULL;
-
-	rbuf_free(*p);
-	*p = NULL;
+	if (rb)
+		udebug_remote_buf_unmap(&u, rb);
 
 	return NULL;
 }
@@ -424,7 +426,6 @@ uc_udebug_snapshot_get_ring(uc_vm_t *vm, size_t nargs)
 {
 	struct udebug_snapshot *s = uc_fn_thisval("udebug.snapshot");
 	struct udebug_remote_buf *rb;
-	uintptr_t idx;
 
 	if (!s)
 		return NULL;
@@ -433,8 +434,7 @@ uc_udebug_snapshot_get_ring(uc_vm_t *vm, size_t nargs)
 	if (!rb)
 		return NULL;
 
-	idx = (uintptr_t)rb->priv;
-	return ucv_array_get(registry, idx);
+	return ucv_get(rb->priv);
 }
 
 static uc_value_t *
@@ -636,16 +636,20 @@ static const uc_function_list_t global_fns[] = {
 	{ "foreach_packet", uc_udebug_foreach_packet },
 };
 
+static void rbuf_free(void *ptr)
+{
+	struct udebug_remote_buf *rb = ptr;
+
+	if (rb->buf.data)
+		udebug_remote_buf_unmap(&u, rb);
+}
+
 void uc_module_init(uc_vm_t *vm, uc_value_t *scope)
 {
-	_vm = vm;
 	uc_function_list_register(scope, global_fns);
 
 	wbuf_type = uc_type_declare(vm, "udebug.wbuf", wbuf_fns, wbuf_free);
-	rbuf_type = uc_type_declare(vm, "udebug.rbuf", rbuf_fns, rbuf_free);
+	uc_type_declare(vm, "udebug.rbuf", rbuf_fns, rbuf_free);
 	snapshot_type = uc_type_declare(vm, "udebug.snapshot", snapshot_fns, free);
 	pcap_type = uc_type_declare(vm, "udebug.pcap", pcap_fns, uc_udebug_pcap_free);
-
-	registry = ucv_array_new(vm);
-	uc_vm_registry_set(vm, "udebug.registry", registry);
 }
