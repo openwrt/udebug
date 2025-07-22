@@ -13,7 +13,6 @@ static uc_vm_t *_vm;
 
 struct uc_pcap {
 	struct pcap_context pcap;
-	int fd;
 	FILE *f;
 };
 
@@ -274,47 +273,23 @@ uc_udebug_pcap_init(struct uc_pcap *p, uc_value_t *args)
 	pcap_init(&p->pcap, &meta);
 }
 
-static void
-write_retry(int fd, const void *data, size_t len)
-{
-	do {
-		ssize_t cur;
-
-		cur = write(fd, data, len);
-		if (cur < 0) {
-			if (errno == EINTR)
-				continue;
-
-			return;
-		}
-
-		data += cur;
-		len -= cur;
-	} while (len > 0);
-}
-
-static void
-uc_udebug_pcap_write_block(struct uc_pcap *p)
-{
-	size_t len;
-	void *data;
-
-	data = pcap_block_get(&len);
-	write_retry(p->fd, data, len);
-}
-
 static uc_value_t *
 uc_debug_pcap_init(int fd, uc_value_t *args)
 {
 	struct uc_pcap *p;
+	FILE *f;
 
 	if (fd < 0)
 		return NULL;
 
+	f = fdopen(fd, "w");
+	if (!f)
+		return NULL;
+
 	p = calloc(1, sizeof(*p));
-	p->fd = fd;
+	p->f = f;
 	uc_udebug_pcap_init(p, args);
-	uc_udebug_pcap_write_block(p);
+	pcap_block_write_file(p->f);
 
 	return uc_resource_new(pcap_type, p);
 }
@@ -399,13 +374,13 @@ uc_udebug_pcap_write(uc_vm_t *vm, size_t nargs)
 			if (pcap_interface_rbuf_init(&p->pcap, rb))
 				continue;
 
-			uc_udebug_pcap_write_block(p);
+			pcap_block_write_file(p->f);
 		}
 
 		if (pcap_snapshot_packet_init(&u, &it))
 			continue;
 
-		uc_udebug_pcap_write_block(p);
+		pcap_block_write_file(p->f);
 	}
 
 	return NULL;
@@ -419,8 +394,8 @@ uc_udebug_pcap_free(void *ptr)
 	if (!p)
 		return;
 
-	if (p->fd >= 0)
-		close(p->fd);
+	if (p->f)
+		fclose(p->f);
 	free(p);
 }
 
