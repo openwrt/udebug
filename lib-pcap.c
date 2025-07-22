@@ -252,10 +252,13 @@ int pcap_snapshot_packet_init(struct udebug *ctx, struct udebug_iter *it)
 	return 0;
 }
 
-void pcap_block_write_file(FILE *f)
+bool pcap_block_write_file(FILE *f)
 {
-	fwrite(pcap_buf, pcap_hdr->len, 1, f);
+	if (fwrite(pcap_buf, pcap_hdr->len, 1, f) != 1)
+		return false;
+
 	fflush(f);
+	return true;
 }
 
 void *pcap_block_get(size_t *len)

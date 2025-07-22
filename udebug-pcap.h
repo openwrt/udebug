@@ -43,7 +43,7 @@ void pcap_packet_done(void);
 int pcap_interface_rbuf_init(struct pcap_context *p, struct udebug_remote_buf *rb);
 int pcap_snapshot_packet_init(struct udebug *ctx, struct udebug_iter *it);
 
-void pcap_block_write_file(FILE *f);
+bool pcap_block_write_file(FILE *f);
 void *pcap_block_get(size_t *len);
 
 #endif

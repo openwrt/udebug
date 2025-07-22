@@ -351,6 +351,7 @@ uc_udebug_pcap_write(uc_vm_t *vm, size_t nargs)
 	size_t n = ucv_type(arg) == UC_ARRAY ? ucv_array_length(arg) : 1;
 	struct udebug_snapshot **s;
 	struct udebug_iter it;
+	bool ret = false;
 
 	if (!p)
 		return NULL;
@@ -359,10 +360,10 @@ uc_udebug_pcap_write(uc_vm_t *vm, size_t nargs)
 	if (ucv_type(arg) == UC_ARRAY)
 		for (size_t i = 0; i < n; i++) {
 			if ((s[i] = uc_get_snapshot(ucv_array_get(arg, i))) == NULL)
-				return NULL;
+				goto out;
 	} else {
 		if ((s[0] = uc_get_snapshot(arg)) == NULL)
-			return NULL;
+			goto out;
 	}
 
 	udebug_iter_start(&it, s, n);
@@ -374,16 +375,21 @@ uc_udebug_pcap_write(uc_vm_t *vm, size_t nargs)
 			if (pcap_interface_rbuf_init(&p->pcap, rb))
 				continue;
 
-			pcap_block_write_file(p->f);
+			if (!pcap_block_write_file(p->f))
+				return NULL;
 		}
 
 		if (pcap_snapshot_packet_init(&u, &it))
 			continue;
 
-		pcap_block_write_file(p->f);
+		if (!pcap_block_write_file(p->f))
+			return NULL;
+
+		ret = true;
 	}
 
-	return NULL;
+out:
+	return ucv_boolean_new(ret);
 }
 
 static void
