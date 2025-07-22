@@ -585,12 +585,33 @@ uc_udebug_wbuf_close(uc_vm_t *vm, size_t nargs)
 }
 
 static void
-uc_udebug_wbuf_add_string(struct udebug_buf *buf, uc_value_t *val)
+uc_udebug_wbuf_append(uc_vm_t *vm, struct udebug_buf *buf, uc_value_t *val)
 {
-	udebug_entry_init(buf);
-	udebug_entry_append(buf, ucv_string_get(val), ucv_string_length(val));
-	udebug_entry_add(buf);
+	struct printbuf *pb;
+	size_t len;
+
+	if (!val)
+		return;
+
+	switch (ucv_type(val)) {
+	case UC_STRING:
+		udebug_entry_append(buf, ucv_string_get(val), ucv_string_length(val));
+		break;
+	case UC_ARRAY:
+		len = ucv_array_length(val);
+		for (size_t i = 0; i < len; i++)
+			uc_udebug_wbuf_append(vm, buf, ucv_array_get(val, i));
+		break;
+	default:
+		pb = xprintbuf_new();
+		ucv_to_stringbuf(vm, pb, val, false);
+		udebug_entry_append(buf, pb->buf, pb->bpos);
+		printbuf_free(pb);
+		break;
+	}
 }
+
+
 
 static uc_value_t *
 uc_udebug_wbuf_add(uc_vm_t *vm, size_t nargs)
@@ -598,10 +619,12 @@ uc_udebug_wbuf_add(uc_vm_t *vm, size_t nargs)
 	struct udebug_buf *buf = uc_fn_thisval("udebug.wbuf");
 	uc_value_t *arg = uc_fn_arg(0);
 
-	if (!buf || ucv_type(arg) != UC_STRING)
+	if (!buf || !arg)
 		return NULL;
 
-	uc_udebug_wbuf_add_string(buf, arg);
+	udebug_entry_init(buf);
+	uc_udebug_wbuf_append(vm, buf, arg);
+	udebug_entry_add(buf);
 
 	return ucv_boolean_new(true);
 }
