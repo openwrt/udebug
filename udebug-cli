@@ -237,7 +237,7 @@ let cmds = {
 			}
 		}
 
-		let done = () => { uloop.done(); };
+		let done = () => { uloop.end(); };
 		signal('SIGINT', done);
 		signal('SIGTERM', done);
 
