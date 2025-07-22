@@ -6,7 +6,6 @@
 #include <ucode/module.h>
 #include "udebug-pcap.h"
 
-static uc_resource_type_t *wbuf_type, *snapshot_type, *pcap_type;
 static struct udebug u;
 
 struct uc_pcap {
@@ -145,7 +144,7 @@ uc_udebug_rbuf_fetch(uc_vm_t *vm, size_t nargs)
 	if (!s)
 		return NULL;
 
-	return uc_resource_new(snapshot_type, s);
+	return ucv_resource_create(vm, "udebug.snapshot", s);
 }
 
 static uc_value_t *
@@ -276,7 +275,7 @@ uc_udebug_pcap_init(struct uc_pcap *p, uc_value_t *args)
 }
 
 static uc_value_t *
-uc_debug_pcap_init(int fd, uc_value_t *args)
+uc_debug_pcap_init(uc_vm_t *vm, int fd, uc_value_t *args)
 {
 	struct uc_pcap *p;
 	FILE *f;
@@ -293,7 +292,7 @@ uc_debug_pcap_init(int fd, uc_value_t *args)
 	uc_udebug_pcap_init(p, args);
 	pcap_block_write_file(p->f);
 
-	return uc_resource_new(pcap_type, p);
+	return ucv_resource_create(vm, "udebug.pcap", p);
 }
 
 static uc_value_t *
@@ -312,7 +311,7 @@ uc_udebug_pcap_file(uc_vm_t *vm, size_t nargs)
 	} else if (!file)
 		fd = STDOUT_FILENO;
 
-	return uc_debug_pcap_init(fd, args);
+	return uc_debug_pcap_init(vm, fd, args);
 }
 
 static uc_value_t *
@@ -336,7 +335,7 @@ uc_udebug_pcap_udp(uc_vm_t *vm, size_t nargs)
 
 	fd = usock(USOCK_UDP, ucv_string_get(host), port_str);
 
-	return uc_debug_pcap_init(fd, args);
+	return uc_debug_pcap_init(vm, fd, args);
 }
 
 static struct udebug_snapshot *
@@ -543,7 +542,7 @@ uc_udebug_create_ring(uc_vm_t *vm, size_t nargs)
 
 	udebug_buf_add(&u, buf, meta);
 
-	return uc_resource_new(wbuf_type, buf);
+	return ucv_resource_create(vm, "udebug.wbuf", buf);
 }
 
 static void wbuf_free(void *ptr)
@@ -552,7 +551,6 @@ static void wbuf_free(void *ptr)
 		return;
 
 	udebug_buf_free(ptr);
-	free(ptr);
 }
 
 static uc_value_t *
@@ -648,8 +646,8 @@ void uc_module_init(uc_vm_t *vm, uc_value_t *scope)
 {
 	uc_function_list_register(scope, global_fns);
 
-	wbuf_type = uc_type_declare(vm, "udebug.wbuf", wbuf_fns, wbuf_free);
+	uc_type_declare(vm, "udebug.wbuf", wbuf_fns, wbuf_free);
 	uc_type_declare(vm, "udebug.rbuf", rbuf_fns, rbuf_free);
-	snapshot_type = uc_type_declare(vm, "udebug.snapshot", snapshot_fns, free);
-	pcap_type = uc_type_declare(vm, "udebug.pcap", pcap_fns, uc_udebug_pcap_free);
+	uc_type_declare(vm, "udebug.snapshot", snapshot_fns, free);
+	uc_type_declare(vm, "udebug.pcap", pcap_fns, uc_udebug_pcap_free);
 }
