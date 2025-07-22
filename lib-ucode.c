@@ -526,7 +526,7 @@ uc_udebug_create_ring(uc_vm_t *vm, size_t nargs)
 
 	buf = calloc_a(sizeof(*buf),
 		       &name_buf, strlen(ucv_string_get(name)) + 1,
-		       &meta, sizeof(meta),
+		       &meta, sizeof(*meta),
 		       &flags, flags_len * sizeof(*flags),
 		       &flag_name_buf, flag_str_len);
 	meta->name = strcpy(name_buf, ucv_string_get(name));
