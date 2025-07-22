@@ -46,12 +46,20 @@ uc_udebug_init(uc_vm_t *vm, size_t nargs)
 	uc_value_t *arg = uc_fn_arg(0);
 	uc_value_t *flag_auto = uc_fn_arg(1);
 	const char *path = NULL;
+	static bool init_done;
 
 	if (ucv_type(arg) == UC_STRING)
 		path = ucv_string_get(arg);
 
-	udebug_init(&u);
-	u.notify_cb = uc_udebug_notify_cb;
+	if (!init_done) {
+		udebug_init(&u);
+		u.notify_cb = uc_udebug_notify_cb;
+	}
+
+	if (init_done && !path && udebug_is_connected(&u))
+		goto out;
+
+	init_done = true;
 	if (flag_auto && !ucv_is_truish(flag_auto)) {
 		if (udebug_connect(&u, path))
 			return NULL;
@@ -59,6 +67,7 @@ uc_udebug_init(uc_vm_t *vm, size_t nargs)
 		udebug_auto_connect(&u, path);
 	}
 
+out:
 	return ucv_boolean_new(true);
 }
 
