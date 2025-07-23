@@ -707,6 +707,9 @@ void uc_module_init(uc_vm_t *vm, uc_value_t *scope)
 
 #define ADD_CONST(name) \
 	ucv_object_add(scope, #name, ucv_int64_new(UDEBUG_##name))
+	ADD_CONST(FORMAT_PACKET);
+	ADD_CONST(FORMAT_STRING);
+	ADD_CONST(FORMAT_BLOBMSG);
 	ADD_CONST(DLT_ETHERNET);
 	ADD_CONST(DLT_PPP);
 	ADD_CONST(DLT_IEEE_802_11);
