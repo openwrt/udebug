@@ -480,8 +480,9 @@ uc_udebug_foreach_packet(uc_vm_t *vm, size_t nargs)
 		uc_vm_stack_push(vm, ucv_get(fn));
 		uc_vm_stack_push(vm, ucv_get(s_obj));
 		uc_vm_stack_push(vm, ucv_string_new_length(it.data, it.len));
+		uc_vm_stack_push(vm, ucv_int64_new(it.timestamp));
 
-		if (uc_vm_call(vm, true, 2) != EXCEPTION_NONE)
+		if (uc_vm_call(vm, true, 3) != EXCEPTION_NONE)
 			break;
 
 		ucv_put(uc_vm_stack_pop(vm));
