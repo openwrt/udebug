@@ -570,7 +570,7 @@ uc_udebug_create_ring(uc_vm_t *vm, size_t nargs)
 		meta->n_flags++;
 	}
 
-	if (udebug_buf_init(buf, ucv_int64_get(size), ucv_int64_get(entries))) {
+	if (udebug_buf_init(buf, ucv_int64_get(entries), ucv_int64_get(size))) {
 		free(buf);
 		return NULL;
 	}
