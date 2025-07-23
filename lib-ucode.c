@@ -2,6 +2,7 @@
 #include <math.h>
 #include <libubox/utils.h>
 #include <libubox/usock.h>
+#include <libubox/udebug-proto.h>
 #include <libubox/udebug.h>
 #include <ucode/module.h>
 #include "udebug-pcap.h"
@@ -251,6 +252,24 @@ uc_udebug_rbuf_get_flags(uc_vm_t *vm, size_t nargs)
 		return NULL;
 
 	return ucv_int64_new(udebug_buf_flags(&rb->buf));
+}
+
+static uc_value_t *
+uc_udebug_rbuf_get_info(uc_vm_t *vm, size_t nargs)
+{
+	struct udebug_remote_buf *rb = uc_fn_rbuf(vm);
+	uc_value_t *val;
+
+	if (!rb)
+		return NULL;
+
+	val = ucv_object_new(vm);
+	ucv_object_add(val, "ring_size", ucv_int64_new(rb->buf.hdr->ring_size));
+	ucv_object_add(val, "data_size", ucv_int64_new(rb->buf.hdr->data_size));
+	ucv_object_add(val, "format", ucv_int64_new(rb->buf.hdr->format));
+	ucv_object_add(val, "sub_format", ucv_int64_new(rb->buf.hdr->sub_format));
+
+	return val;
 }
 
 static uc_value_t *
@@ -661,6 +680,7 @@ static const uc_function_list_t rbuf_fns[] = {
 	{ "get_flags", uc_udebug_rbuf_get_flags },
 	{ "set_fetch_duration", uc_udebug_rbuf_set_fetch_duration },
 	{ "set_fetch_count", uc_udebug_rbuf_set_fetch_count },
+	{ "get_info", uc_udebug_rbuf_get_info },
 	{ "close", uc_udebug_rbuf_close },
 };
 
