@@ -1,6 +1,6 @@
 #!/usr/bin/env ucode
 'use strict';
-import { basename } from "fs";
+import { basename, open, stdout } from "fs";
 let udebug = require("udebug");
 let uloop = require("uloop");
 let libubus = require("ubus");
@@ -21,12 +21,16 @@ Usage: ${basename(sourcepath())} [<options>] <command> [<args>]
     -i <process>[:<name>]	Select debug buffer for snapshot/stream
     -s <path>			Use udebug socket <path>
     -q				Suppress warnings/error messages
+    -l				Select only debug buffers containing log messages
+    -t				Include timestamps in logstream output
 
   Commands:
     list:			List available debug buffers
     snapshot:			Create a pcapng snapshot of debug buffers
     set_flag [<name>=0|1 ...]	Set ring buffer flags
     get_flags			Get ring buffer flags
+    stream:			Stream packet data as pcap
+    logstream:			Stream syslog data as text
 
 `;
 
@@ -63,6 +67,12 @@ while (substr(ARGV[0], 0, 1) == "-") {
 	case 'f':
 		opts.force = true;
 		break;
+	case 'l':
+		opts.log_only = true;
+		break;
+	case 't':
+		opts.timestamp = true;
+		break;
 	default:
 		usage();
 	}
@@ -72,7 +82,7 @@ let procs = {};
 let selected = [];
 let rings = {};
 let subscriber;
-let pcap;
+let pcap, log_out;
 
 function ring_selected(ring) {
 	if (!length(opts.select))
@@ -97,7 +107,15 @@ function poll_data() {
 			push(data, s);
 	}
 	if (length(data) > 0) {
-		if (pcap.write(data) == null)
+		if (log_out) {
+			udebug.foreach_packet(data, (entry, data, timestamp) => {
+				if ((opts.timestamp && !log_out.write(sprintf("[%.6f] ", timestamp / 1000000.0))) ||
+					!log_out.write(data) || !log_out.write("\n"))
+					uloop.end();
+				log_out.flush();
+			});
+		}
+		if (pcap && pcap.write(data) == null)
 			uloop.end();
 	}
 }
@@ -108,6 +126,8 @@ function open_ring(ring, poll) {
 
 	if (!ref)
 		return null;
+	if (opts.log_only && ref.get_info().format != udebug.FORMAT_STRING)
+		return false;
 	if (opts.duration)
 		ref.set_fetch_duration(opts.duration);
 	if (poll)
@@ -120,7 +140,20 @@ function open_ring(ring, poll) {
 	return ring;
 }
 
-function open_output() {
+function open_log_out() {
+	let out = opts.output_file;
+	if (!opts.output_file || out == "-")
+		log_out = stdout;
+	else
+		log_out = open(opts.output_file, "w");
+
+	if (!log_out) {
+		_warn(`Could not open output file\n`);
+		exit(1);
+	}
+}
+
+function open_pcap_out() {
 	if (!opts.output_file) {
 		_warn(`No output file\n`);
 		exit(1);
@@ -136,6 +169,47 @@ function open_output() {
 	}
 }
 
+function stream_data(log) {
+	if (log)
+		open_log_out();
+	else
+		open_pcap_out();
+
+	subscriber = ubus.subscriber((req) => {
+		let type = req.type;
+		let ring = req.data;
+		let ring_id = ring.id + "";
+		if (type == "remove") {
+			ring = rings[ring_id];
+			if (!ring)
+				return;
+
+			ring[1].close();
+			delete rings[ring_id];
+		} else if (type == "add") {
+			open_ring(ring, true);
+			poll_data();
+		}
+	}, null, [ "udebug" ]);
+	for (let ring in selected) {
+		if (open_ring(ring, true) == null) {
+			_warn(`Failed to open ring ${ring_name}\n`);
+			if (opts.force)
+				continue;
+
+			exit(1);
+		}
+	}
+
+	let done = () => { uloop.end(); };
+	signal('SIGINT', done);
+	signal('SIGTERM', done);
+
+	poll_data();
+	delete opts.duration;
+	uloop.run();
+}
+
 let cmds = {
 	list: function() {
 		for (let proc in procs) {
@@ -145,7 +219,7 @@ let cmds = {
 		}
 	},
 	snapshot: function() {
-		open_output();
+		open_pcap_out();
 
 		if (!length(selected)) {
 			_warn(`No available debug buffers\n`);
@@ -153,7 +227,7 @@ let cmds = {
 		}
 
 		for (let ring in selected) {
-			if (!open_ring(ring)) {
+			if (open_ring(ring) == null) {
 				_warn(`Failed to open ring ${ring.proc_name}:${ring.ring_name}\n`);
 				if (opts.force)
 					continue;
@@ -210,48 +284,19 @@ let cmds = {
 		}
 	},
 	stream: function() {
-		open_output();
-
-		subscriber = ubus.subscriber((req) => {
-			let type = req.type;
-			let ring = req.data;
-			let ring_id = ring.id + "";
-			if (type == "remove") {
-				ring = rings[ring_id];
-				if (!ring)
-					return;
-
-				ring[1].close();
-				delete rings[ring_id];
-			} else if (type == "add") {
-				open_ring(ring, true);
-				poll_data();
-			}
-		});
-		subscriber.subscribe("udebug");
-		for (let ring in selected) {
-			if (!open_ring(ring, true)) {
-				_warn(`Failed to open ring ${ring_name}\n`);
-				if (opts.force)
-					continue;
-
-				exit(1);
-			}
-		}
-
-		let done = () => { uloop.end(); };
-		signal('SIGINT', done);
-		signal('SIGTERM', done);
-
-		poll_data();
-		delete opts.duration;
-		uloop.run();
+		stream_data(false);
+	},
+	logstream: function() {
+		stream_data(true);
 	}
 };
 
 let cmd = shift(ARGV);
 if (!cmds[cmd])
 	usage();
+
+if (cmd == "logstream")
+	opts.log_only = true;
 
 let ring_list = ubus.call("udebug", "list");
 if (!ring_list || !ring_list.results) {
