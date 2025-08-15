@@ -10,12 +10,14 @@ let ubus = libubus.connect();
 let opts = {
 	select: []
 };
+let service_config;
 
 const usage_message = `
 Usage: ${basename(sourcepath())} [<options>] <command> [<args>]
 
   Options:
     -f				Ignore errors on opening rings
+    -e <service list>		List of services to enable before running the command
     -d <duration>:		Only fetch data up to <duration> seconds old
     -o <file>|-			Set output file for snapshot/stream (or '-' for stdout)
     -i <process>[:<name>]	Select debug buffer for snapshot/stream
@@ -25,12 +27,18 @@ Usage: ${basename(sourcepath())} [<options>] <command> [<args>]
     -t				Include timestamps in logstream output
 
   Commands:
+    reset:			Reset enabled debug buffers to configured settings
+    set	<service list>:		Set enabled debug buffers
     list:			List available debug buffers
     snapshot:			Create a pcapng snapshot of debug buffers
     set_flag [<name>=0|1 ...]	Set ring buffer flags
     get_flags			Get ring buffer flags
     stream:			Stream packet data as pcap
     logstream:			Stream syslog data as text
+
+  Service list: space separated list of services matching the config
+    - <name>			Enable service <name>
+    - <name>.<opt>=<val>	Set service <name> option <opt> to <val>
 
 `;
 
@@ -44,6 +52,66 @@ function _warn(str) {
 function usage() {
 	warn(usage_message);
 	exit(1);
+}
+
+function parse_service_value(svc, option, val)
+{
+	if (option) {
+		svc[option] = val;
+		val = '1';
+	}
+
+	svc.enabled = val;
+}
+
+function parse_service_entry(name, option, val)
+{
+	if (index(name, "*") >= 0) {
+		for (let svcname, svc in service_config) {
+			if (!wildcard(svcname, name))
+				continue;
+
+			parse_service_value(svc, option, val);
+		}
+		return;
+	}
+
+	let svc = service_config[name];
+	if (svc) {
+		parse_service_value(svc, option, val);
+		return;
+	}
+
+	if (!option && !+val)
+		return;
+
+	svc = service_config[name] = {
+		enabled: "1"
+	};
+
+	if (option)
+		parse_service_value(svc, option, val);
+}
+
+function parse_service_list(val) {
+	if (!service_config) {
+		service_config = ubus.call('udebug', 'get_config', { override: false })?.service;
+		if (!service_config) {
+			_warn('Failed to get current service config');
+			exit(1);
+		}
+		for (let name, svc in service_config)
+			svc.enabled = "0";
+	}
+
+	let val_list = split(val, /[ \t]+/);
+	for (let cur in val_list) {
+		cur = split(cur, "=");
+		let val = cur[1] ?? "1";
+
+		cur = split(cur[0], ".", 2);
+		parse_service_entry(cur[0], cur[1], val);
+	}
 }
 
 while (substr(ARGV[0], 0, 1) == "-") {
@@ -60,6 +128,9 @@ while (substr(ARGV[0], 0, 1) == "-") {
 		break;
 	case 'o':
 		opts.output_file = shift(ARGV);
+		break;
+	case 'e':
+		parse_service_list(shift(ARGV));
 		break;
 	case 'q':
 		opts.quiet = true;
@@ -288,7 +359,13 @@ let cmds = {
 	},
 	logstream: function() {
 		stream_data(true);
-	}
+	},
+	reset: function() {
+		exit(0);
+	},
+	set: function() {
+		exit(0);
+	},
 };
 
 let cmd = shift(ARGV);
@@ -297,6 +374,28 @@ if (!cmds[cmd])
 
 if (cmd == "logstream")
 	opts.log_only = true;
+
+if (cmd == 'reset') {
+	ubus.call('udebug', 'set_config', { override: true });
+	exit(0);
+}
+
+if (cmd == 'set') {
+	if (!length(ARGV))
+		usage();
+	for (let val in ARGV)
+		parse_service_list(val);
+}
+
+if (service_config) {
+	ubus.call('udebug', 'set_config', {
+		override: true,
+		service: service_config,
+	});
+}
+
+if (service_config && cmd != 'set')
+	sleep(1000);
 
 let ring_list = ubus.call("udebug", "list");
 if (!ring_list || !ring_list.results) {
