@@ -6,6 +6,7 @@ struct ubus_auto_conn conn;
 struct blob_buf b;
 static struct ubus_object udebug_object;
 static struct blob_attr *service_config;
+static struct blob_attr *service_config_override;
 
 enum {
 	LIST_ATTR_PROCNAME,
@@ -125,19 +126,30 @@ udebug_list(struct ubus_context *ctx, struct ubus_object *obj,
 }
 
 enum {
+	CFG_ATTR_OVERRIDE,
 	CFG_ATTR_SERVICE,
 	__CFG_ATTR_MAX
 };
 static const struct blobmsg_policy config_policy[__CFG_ATTR_MAX] = {
+	[CFG_ATTR_OVERRIDE] = { "override", BLOBMSG_TYPE_BOOL },
 	[CFG_ATTR_SERVICE] = { "service", BLOBMSG_TYPE_TABLE },
 };
 
 static struct blob_attr *
-udebug_fill_config(void)
+udebug_fill_config(int override)
 {
+	struct blob_attr *config;
+
+	if (override < 0)
+		config = service_config_override ? : service_config;
+	else if (override)
+		config = service_config_override;
+	else
+		config = service_config;
+
 	blob_buf_init(&b, 0);
-	if (service_config)
-		blobmsg_add_blob(&b, service_config);
+	if (config)
+		blobmsg_add_blob(&b, config);
 	else
 		blobmsg_close_table(&b, blobmsg_open_table(&b, "service"));
 
@@ -150,13 +162,23 @@ udebug_set_config(struct ubus_context *ctx, struct ubus_object *obj,
 		  struct blob_attr *msg)
 {
 	struct blob_attr *tb[__CFG_ATTR_MAX], *cur;
+	struct blob_attr **dest = &service_config;
 
 	blobmsg_parse_attr(config_policy, __CFG_ATTR_MAX, tb, msg);
+	if ((cur = tb[CFG_ATTR_OVERRIDE]) != NULL &&
+	    blobmsg_get_bool(cur))
+		dest = &service_config_override;
+
 	if ((cur = tb[CFG_ATTR_SERVICE]) != NULL) {
-		free(service_config);
-		service_config = blob_memdup(cur);
-		ubus_notify(ctx, obj, "config", udebug_fill_config(), -1);
+		free(*dest);
+		*dest = blob_memdup(cur);
+	} else if (dest == &service_config_override) {
+		free(*dest);
+		*dest = NULL;
 	}
+
+	if (dest != &service_config || !service_config_override)
+		ubus_notify(ctx, obj, "config", udebug_fill_config(-1), -1);
 
 	return 0;
 }
@@ -166,14 +188,23 @@ udebug_get_config(struct ubus_context *ctx, struct ubus_object *obj,
 		  struct ubus_request_data *req, const char *method,
 		  struct blob_attr *msg)
 {
-	ubus_send_reply(ctx, req, udebug_fill_config());
+	struct blob_attr *tb[__CFG_ATTR_MAX], *cur;
+	int override = -1;
+
+	blobmsg_parse_attr(config_policy, __CFG_ATTR_MAX, tb, msg);
+	if ((cur = tb[CFG_ATTR_OVERRIDE]) != NULL)
+		override = blobmsg_get_bool(cur);
+
+	ubus_send_reply(ctx, req, udebug_fill_config(override));
+
 	return 0;
 }
 
 static const struct ubus_method udebug_methods[] = {
 	UBUS_METHOD("list", udebug_list, list_policy),
 	UBUS_METHOD("set_config", udebug_set_config, config_policy),
-	UBUS_METHOD_NOARG("get_config", udebug_get_config),
+	UBUS_METHOD_MASK("get_config", udebug_get_config, config_policy,
+			 1 << CFG_ATTR_OVERRIDE),
 };
 
 static struct ubus_object_type udebug_object_type =
