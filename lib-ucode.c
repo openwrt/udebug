@@ -417,6 +417,9 @@ uc_udebug_pcap_write(uc_vm_t *vm, size_t nargs)
 		ret = true;
 	}
 
+	if (ferror(p->f))
+		return NULL;
+
 out:
 	return ucv_boolean_new(ret);
 }
