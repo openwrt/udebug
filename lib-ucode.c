@@ -1,5 +1,7 @@
 #define _GNU_SOURCE
 #include <math.h>
+#include <ctype.h>
+
 #include <libubox/utils.h>
 #include <libubox/usock.h>
 #include <libubox/udebug-proto.h>
@@ -7,7 +9,27 @@
 #include <ucode/module.h>
 #include "udebug-pcap.h"
 
+#define TRACE_RING_ID	0x7fffffff
+
 static struct udebug u;
+static bool init_done;
+static int trace_dirfd = -1;
+
+static struct udebug_hdr trace_hdr = {
+	.format = UDEBUG_FORMAT_STRING,
+};
+static struct udebug_packet_info trace_meta = {
+	.attr = {
+		[UDEBUG_META_IFACE_NAME] = "kernel",
+		[UDEBUG_META_IFACE_DESC] = "tracepoint events",
+	},
+};
+static struct udebug_remote_buf trace_rbuf = {
+	.node.key = (void *)(uintptr_t)TRACE_RING_ID,
+	.buf.hdr = &trace_hdr,
+	.meta = &trace_meta,
+	.pcap_iface = ~0
+};
 
 struct uc_pcap {
 	struct pcap_context pcap;
@@ -20,16 +42,25 @@ struct uc_remote_ring {
 	uc_vm_t *vm;
 };
 
+struct uc_trace_ring {
+	uc_vm_t *vm;
+	uc_value_t *res;
+	struct uloop_fd fd;
+	int dir_fd;
+
+	unsigned int ts_ofs;
+	char *instance;
+};
+
 static void
-uc_udebug_notify_cb(struct udebug *ctx, struct udebug_remote_buf *rb)
+uc_udebug_call_cb(uc_vm_t *vm, uc_value_t *this)
 {
-	struct uc_remote_ring *rr = container_of(rb, struct uc_remote_ring, rb);
-	uc_value_t *cb, *this;
-	uc_vm_t *vm = rr->vm;
+	uc_value_t *cb;
 
-	this = rb->priv;
+	if (!this)
+		return;
+
 	cb = ucv_resource_value_get(this, 0);
-
 	if (!ucv_is_callable(cb))
 		return;
 
@@ -41,26 +72,40 @@ uc_udebug_notify_cb(struct udebug *ctx, struct udebug_remote_buf *rb)
 	ucv_put(uc_vm_stack_pop(vm));
 }
 
+static void
+uc_udebug_notify_cb(struct udebug *ctx, struct udebug_remote_buf *rb)
+{
+	struct uc_remote_ring *rr = container_of(rb, struct uc_remote_ring, rb);
+
+	uc_udebug_call_cb(rr->vm, rb->priv);
+}
+
+static void
+__uc_udebug_init(void)
+{
+	if (init_done)
+		return;
+
+	udebug_init(&u);
+	avl_insert(&u.remote_rings, &trace_rbuf.node);
+	u.notify_cb = uc_udebug_notify_cb;
+	init_done = true;
+}
+
 static uc_value_t *
 uc_udebug_init(uc_vm_t *vm, size_t nargs)
 {
 	uc_value_t *arg = uc_fn_arg(0);
 	uc_value_t *flag_auto = uc_fn_arg(1);
 	const char *path = NULL;
-	static bool init_done;
 
 	if (ucv_type(arg) == UC_STRING)
 		path = ucv_string_get(arg);
 
-	if (!init_done) {
-		udebug_init(&u);
-		u.notify_cb = uc_udebug_notify_cb;
-	}
-
 	if (init_done && !path && udebug_is_connected(&u))
 		goto out;
 
-	init_done = true;
+	__uc_udebug_init();
 	if (flag_auto && !ucv_is_truish(flag_auto)) {
 		if (udebug_connect(&u, path))
 			return NULL;
@@ -654,8 +699,6 @@ uc_udebug_wbuf_append(uc_vm_t *vm, struct udebug_buf *buf, uc_value_t *val)
 	}
 }
 
-
-
 static uc_value_t *
 uc_udebug_wbuf_add(uc_vm_t *vm, size_t nargs)
 {
@@ -671,6 +714,345 @@ uc_udebug_wbuf_add(uc_vm_t *vm, size_t nargs)
 
 	return ucv_boolean_new(true);
 }
+
+static void
+uc_udebug_trace_uloop_cb(struct uloop_fd *fd, unsigned int events)
+{
+	struct uc_trace_ring *tr = container_of(fd, struct uc_trace_ring, fd);
+
+	uc_udebug_call_cb(tr->vm, tr->res);
+}
+
+static bool
+trace_parse_meta(struct uc_trace_ring *tr, int fd)
+{
+	FILE *f = fdopen(fd, "r");
+	char str[256];
+	char *cur;
+
+	if (!f) {
+		close(fd);
+		return false;
+	}
+
+	while (fgets(str, sizeof(str), f)) {
+		cur = strstr(str, " TIMESTAMP ");
+		if (!cur)
+			continue;
+
+		while (cur[-1] == ' ' && cur[-2] != '|')
+			cur--;
+
+		tr->ts_ofs = cur - str;
+		break;
+	}
+
+	fclose(f);
+
+	return tr->ts_ofs != 0;
+}
+
+static uc_value_t *
+uc_udebug_trace_ring(uc_vm_t *vm, size_t nargs)
+{
+	uc_value_t *instance_arg = uc_fn_arg(0);
+	const char *instance = "udebug";
+	struct uc_trace_ring *tr;
+	int dfd, fd, ret;
+	uc_value_t *res;
+
+	if (instance_arg) {
+		if (ucv_type(instance_arg) != UC_STRING)
+			return NULL;
+
+		instance = ucv_string_get(instance_arg);
+	}
+
+	if (trace_dirfd < 0)
+		trace_dirfd = open("/sys/kernel/debug/tracing/instances", O_RDONLY | O_DIRECTORY);
+	if (trace_dirfd < 0)
+		return NULL;
+
+	ret = unlinkat(trace_dirfd, instance, AT_REMOVEDIR);
+	ret = mkdirat(trace_dirfd, instance, 0700);
+	if (ret < 0)
+		return NULL;
+
+	dfd = openat(trace_dirfd, instance, O_RDONLY | O_DIRECTORY);
+	if (dfd < 0)
+		return NULL;
+
+	fd = openat(dfd, "trace_pipe", O_RDONLY);
+	if (fd < 0)
+		goto error;
+
+	res = ucv_resource_create_ex(vm, "udebug.tbuf", (void **)&tr, 1, sizeof(*tr) + strlen(instance + 1));
+	if (!res)
+		goto error;
+
+	__uc_udebug_init();
+	tr->vm = vm;
+	tr->dir_fd = dfd;
+	tr->fd.fd = fd;
+	tr->fd.cb = uc_udebug_trace_uloop_cb;
+	tr->instance = (char *)(tr + 1);
+	strcpy(tr->instance, instance);
+
+	fd = openat(dfd, "trace", O_RDONLY);
+	if (fd < 0 || !trace_parse_meta(tr, fd)) {
+		ucv_put(res);
+		return NULL;
+	}
+
+	return res;
+
+error:
+	close(dfd);
+	return NULL;
+}
+
+static void tbuf_close(void *ptr)
+{
+	struct uc_trace_ring *tr = ptr;
+
+	if (tr->fd.fd < 0)
+		return;
+
+	uloop_fd_delete(&tr->fd);
+	close(tr->fd.fd);
+	close(tr->dir_fd);
+	tr->fd.fd = -1;
+	unlinkat(trace_dirfd, tr->instance, AT_REMOVEDIR);
+}
+
+static struct uc_trace_ring *
+uc_fn_tbuf(uc_vm_t *vm)
+{
+	struct uc_trace_ring *tr = uc_fn_thisval("udebug.tbuf");
+
+	if (!tr || tr->fd.fd < 0)
+		return NULL;
+
+	return tr;
+}
+
+static uc_value_t *
+uc_udebug_tbuf_set_file(uc_vm_t *vm, size_t nargs)
+{
+	struct uc_trace_ring *tr = uc_fn_tbuf(vm);
+	uc_value_t *file = uc_fn_arg(0);
+	uc_value_t *val = uc_fn_arg(1);
+	uc_value_t *ret = NULL;
+	FILE *f;
+	int fd;
+
+	if (!tr || ucv_type(file) != UC_STRING || ucv_type(val) != UC_STRING)
+		return NULL;
+
+	fd = openat(tr->dir_fd, ucv_string_get(file), O_WRONLY);
+	if (fd < 0)
+		return NULL;
+
+	f = fdopen(fd, "w");
+	if (!f) {
+		close(fd);
+		return NULL;
+	}
+
+	if (fwrite(ucv_string_get(val), ucv_string_length(val), 1, f) == 1)
+		ret = ucv_boolean_new(true);
+
+	fclose(f);
+
+	return ret;
+}
+
+
+static uc_value_t *
+uc_udebug_tbuf_set_poll_cb(uc_vm_t *vm, size_t nargs)
+{
+	struct uc_trace_ring *tr = uc_fn_tbuf(vm);
+	uc_value_t *res = _uc_fn_this_res(vm);
+	uc_value_t *val = uc_fn_arg(0);
+
+	if (!tr)
+		return NULL;
+
+	if (val && !ucv_is_callable(val))
+		return NULL;
+
+	ucv_resource_value_set(res, 0, ucv_get(val));
+
+	if (!!tr->res == !!val)
+		goto out;
+
+	ucv_resource_persistent_set(res, !!val);
+	if (val) {
+		uloop_fd_add(&tr->fd, ULOOP_READ);
+		tr->res = ucv_get(res);
+	} else {
+		uloop_fd_delete(&tr->fd);
+		ucv_put(tr->res);
+		tr->res = NULL;
+	}
+
+out:
+	return ucv_boolean_new(true);
+}
+
+static struct udebug_snapshot *
+snapshot_realloc(struct udebug_snapshot *s, size_t data_size)
+{
+	s = xrealloc(s, sizeof(*s) + data_size);
+	s->data = s + 1;
+	return s;
+}
+
+static bool
+trace_parse_timestamp(struct udebug_ptr *ptr, char *str)
+{
+	uint64_t ts, usec;
+	char *err;
+
+	ts = strtoul(str, &err, 10);
+	if (*err != '.')
+		return false;
+
+	usec = strtoul(err + 1, &err, 10);
+	if (*err != ':')
+		return false;
+
+	ptr->timestamp = ts * 1000000 + usec;
+	memmove(str, err + 1, strlen(err + 1) + 1);
+
+	return true;
+}
+
+static uc_value_t *
+uc_udebug_tbuf_fetch(uc_vm_t *vm, size_t nargs)
+{
+	struct uc_trace_ring *tr = uc_fn_tbuf(vm);
+	struct udebug_snapshot *s = NULL;
+	struct udebug_ptr *ptr = NULL;
+	size_t data_ofs = 0;
+	size_t data_size = 0;
+	size_t ptr_ofs = 0;
+	size_t ptr_size = 0;
+	char *cur, *next;
+	size_t ofs = 0;
+	char buf[8192];
+	ssize_t len;
+
+	if (!tr)
+		return NULL;
+
+read_again:
+	len = read(tr->fd.fd, buf + ofs, sizeof(buf) - ofs);
+	if (len < 0) {
+		if (errno == EINTR)
+			goto read_again;
+
+		if (errno == EAGAIN || data_size)
+			goto done;
+
+		goto error;
+	}
+	len += ofs;
+
+	cur = buf;
+	while ((next = memchr(cur, '\n', len)) != NULL) {
+		struct udebug_ptr *cur_ptr;
+		char *line = cur;
+
+		*next = 0;
+
+		while (isspace(*line))
+			line++;
+
+		if (*line == '#' || !line[0])
+			goto next_line;
+
+		if (next - cur <= tr->ts_ofs)
+			goto next_line;
+
+		if (ptr_ofs >= ptr_size) {
+			if (!ptr_size)
+				ptr_size = 4;
+			else
+				ptr_size *= 2;
+
+			ptr = xrealloc(ptr, ptr_size * sizeof(*ptr));
+		}
+
+		cur_ptr = &ptr[ptr_ofs];
+		if (!trace_parse_timestamp(cur_ptr, cur + tr->ts_ofs))
+			continue;
+
+		cur_ptr->start = data_ofs;
+		cur_ptr->len = strlen(line);
+		data_ofs += cur_ptr->len + 1;
+		if (data_ofs >= data_size) {
+			if (!data_size)
+				data_size = 256;
+			else
+				data_size *= 2;
+			s = snapshot_realloc(s, data_size);
+		}
+		strcpy(s->data + cur_ptr->start, line);
+		ptr_ofs++;
+
+next_line:
+		len -= next + 1 - cur;
+		cur = next + 1;
+	}
+
+	if (len)
+		memmove(buf, cur, len);
+	ofs = len;
+	goto read_again;
+
+done:
+	if (!s)
+		goto error;
+
+	ptr_size = ptr_ofs * sizeof(*ptr);
+	data_ofs = (data_ofs + 3) & ~3;
+	data_size = data_ofs + ptr_size;
+	s = snapshot_realloc(s, data_size);
+	s->data_size = data_ofs;
+	s->entries = memcpy(s->data + data_ofs, ptr, ptr_size);
+	s->n_entries = ptr_ofs;
+	s->rbuf_idx = TRACE_RING_ID;
+	free(ptr);
+
+	return ucv_resource_create(vm, "udebug.snapshot", s);
+
+error:
+	free(ptr);
+	free(s);
+	return NULL;
+}
+
+static uc_value_t *
+uc_udebug_tbuf_close(uc_vm_t *vm, size_t nargs)
+{
+	struct uc_trace_ring *tr = uc_fn_tbuf(vm);
+
+	if (!tr)
+		return NULL;
+
+	tbuf_close(tr);
+
+	if (!tr->res)
+		return NULL;
+
+	ucv_resource_persistent_set(tr->res, false);
+	ucv_put(tr->res);
+	tr->res = NULL;
+
+	return NULL;
+}
+
 
 static const uc_function_list_t pcap_fns[] = {
 	{ "close", uc_udebug_pcap_close },
@@ -688,6 +1070,13 @@ static const uc_function_list_t wbuf_fns[] = {
 	{ "close", uc_udebug_wbuf_close },
 };
 
+static const uc_function_list_t tbuf_fns[] = {
+	{ "set_poll_cb", uc_udebug_tbuf_set_poll_cb },
+	{ "set_file", uc_udebug_tbuf_set_file },
+	{ "fetch", uc_udebug_tbuf_fetch },
+	{ "close", uc_udebug_tbuf_close },
+};
+
 static const uc_function_list_t rbuf_fns[] = {
 	{ "set_poll_cb", uc_udebug_rbuf_set_poll_cb },
 	{ "fetch", uc_udebug_rbuf_fetch },
@@ -703,6 +1092,7 @@ static const uc_function_list_t global_fns[] = {
 	{ "init", uc_udebug_init },
 	{ "create_ring", uc_udebug_create_ring },
 	{ "get_ring", uc_udebug_get_ring },
+	{ "trace_ring", uc_udebug_trace_ring },
 	{ "pcap_file", uc_udebug_pcap_file },
 	{ "pcap_udp", uc_udebug_pcap_udp },
 	{ "foreach_packet", uc_udebug_foreach_packet },
@@ -733,6 +1123,7 @@ void uc_module_init(uc_vm_t *vm, uc_value_t *scope)
 
 	uc_type_declare(vm, "udebug.wbuf", wbuf_fns, wbuf_free);
 	uc_type_declare(vm, "udebug.rbuf", rbuf_fns, rbuf_free);
+	uc_type_declare(vm, "udebug.tbuf", tbuf_fns, tbuf_close);
 	uc_type_declare(vm, "udebug.snapshot", snapshot_fns, free);
 	uc_type_declare(vm, "udebug.pcap", pcap_fns, uc_udebug_pcap_free);
 }
