@@ -468,6 +468,17 @@ uc_udebug_snapshot_get_ring(uc_vm_t *vm, size_t nargs)
 }
 
 static uc_value_t *
+uc_udebug_snapshot_entries(uc_vm_t *vm, size_t nargs)
+{
+	struct udebug_snapshot *s = uc_fn_thisval("udebug.snapshot");
+
+	if (!s)
+		return NULL;
+
+	return ucv_int64_new(s->n_entries);
+}
+
+static uc_value_t *
 uc_udebug_foreach_packet(uc_vm_t *vm, size_t nargs)
 {
 	uc_value_t *arg = uc_fn_arg(0);
@@ -667,7 +678,8 @@ static const uc_function_list_t pcap_fns[] = {
 };
 
 static const uc_function_list_t snapshot_fns[] = {
-	{ "get_ring", uc_udebug_snapshot_get_ring }
+	{ "get_ring", uc_udebug_snapshot_get_ring },
+	{ "entries", uc_udebug_snapshot_entries }
 };
 
 static const uc_function_list_t wbuf_fns[] = {
