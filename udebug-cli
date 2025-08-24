@@ -1,6 +1,6 @@
 #!/usr/bin/env ucode
 'use strict';
-import { basename, open, stdout } from "fs";
+import { basename, readlink, open, stdout } from "fs";
 let udebug = require("udebug");
 let uloop = require("uloop");
 let libubus = require("ubus");
@@ -11,6 +11,7 @@ let opts = {
 	select: []
 };
 let service_config;
+let trace_config;
 
 const usage_message = `
 Usage: ${basename(sourcepath())} [<options>] <command> [<args>]
@@ -66,6 +67,13 @@ function parse_service_value(svc, option, val)
 
 function parse_service_entry(name, option, val)
 {
+	if (wildcard(name, "kernel:*")) {
+		name = substr(name, 7);
+		trace_config ??= [];
+		push(trace_config, name);
+		return;
+	}
+
 	if (index(name, "*") >= 0) {
 		for (let svcname, svc in service_config) {
 			if (!wildcard(svcname, name))
@@ -211,6 +219,15 @@ function open_ring(ring, poll) {
 	return ring;
 }
 
+function open_trace() {
+	let ring = udebug.trace_ring("udebug-" + readlink("/proc/self"));
+
+	ring.set_file("trace_clock", "tai");
+	ring.set_file("set_event", join("\n", trace_config));
+	ring.set_poll_cb(poll_data);
+	rings.kernel = [ "kernel", ring ];
+}
+
 function open_log_out() {
 	let out = opts.output_file;
 	if (!opts.output_file || out == "-")
@@ -271,6 +288,9 @@ function stream_data(log) {
 			exit(1);
 		}
 	}
+
+	if (trace_config)
+		open_trace();
 
 	let done = () => { uloop.end(); };
 	signal('SIGINT', done);
