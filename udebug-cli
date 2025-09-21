@@ -188,6 +188,8 @@ function poll_data() {
 	if (length(data) > 0) {
 		if (log_out) {
 			udebug.foreach_packet(data, (entry, data, timestamp) => {
+				if (!length(data))
+					return;
 				if ((opts.timestamp && !log_out.write(sprintf("[%.6f] ", timestamp / 1000000.0))) ||
 					!log_out.write(data) || !log_out.write("\n"))
 					uloop.end();
