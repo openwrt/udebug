@@ -986,7 +986,7 @@ read_again:
 
 		cur_ptr = &ptr[ptr_ofs];
 		if (!trace_parse_timestamp(cur_ptr, cur + tr->ts_ofs))
-			continue;
+			goto next_line;
 
 		cur_ptr->start = data_ofs;
 		cur_ptr->len = strlen(line);
