@@ -1,0 +1,3 @@
+usr/include/udebug.h
+usr/include/udebug-pcap.h
+usr/lib/libudebug.so

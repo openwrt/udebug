@@ -43,3 +43,11 @@ INSTALL(TARGETS udebugd udebug
 INSTALL(TARGETS ucode_lib
 	LIBRARY DESTINATION lib/ucode
 )
+
+ADD_CUSTOM_TARGET(debian
+	COMMAND ${CMAKE_COMMAND} -E echo "Generating debian/changelog from git..."
+	COMMAND ${CMAKE_SOURCE_DIR}/debian/generate-changelog.sh
+	COMMAND dpkg-buildpackage -b -uc -us
+	WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+	COMMENT "Building Debian package"
+)
