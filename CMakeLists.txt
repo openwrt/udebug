@@ -34,6 +34,7 @@ INSTALL(FILES udebug.h udebug-pcap.h
 )
 INSTALL(FILES udebug-cli
 	DESTINATION sbin
+	RENAME udebug
 )
 INSTALL(TARGETS udebugd udebug
 	RUNTIME DESTINATION sbin
