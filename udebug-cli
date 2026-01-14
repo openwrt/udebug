@@ -283,7 +283,7 @@ function stream_data(log) {
 	}, null, [ "udebug" ]);
 	for (let ring in selected) {
 		if (open_ring(ring, true) == null) {
-			_warn(`Failed to open ring ${ring_name}\n`);
+			_warn(`Failed to open ring ${ring.ring_name}\n`);
 			if (opts.force)
 				continue;
 
