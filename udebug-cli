@@ -36,6 +36,7 @@ Usage: ${basename(sourcepath())} [<options>] <command> [<args>]
     get_flags			Get ring buffer flags
     stream:			Stream packet data as pcap
     logstream:			Stream syslog data as text
+    logdump:			Dump syslog data snapshot as text
 
   Service list: space separated list of services matching the config
     - <name>			Enable service <name>
@@ -382,6 +383,26 @@ let cmds = {
 	logstream: function() {
 		stream_data(true);
 	},
+	logdump: function() {
+		open_log_out();
+
+		if (!length(selected)) {
+			_warn(`No available debug buffers\n`);
+			exit(1);
+		}
+
+		for (let ring in selected) {
+			if (open_ring(ring) == null) {
+				_warn(`Failed to open ring ${ring.proc_name}:${ring.ring_name}\n`);
+				if (opts.force)
+					continue;
+
+				exit(1);
+			}
+		}
+
+		poll_data();
+	},
 	reset: function() {
 		exit(0);
 	},
@@ -394,7 +415,7 @@ let cmd = shift(ARGV);
 if (!cmds[cmd])
 	usage();
 
-if (cmd == "logstream")
+if (cmd == "logstream" || cmd == "logdump")
 	opts.log_only = true;
 
 if (cmd == 'reset') {
