@@ -807,6 +807,8 @@ uc_udebug_trace_ring(uc_vm_t *vm, size_t nargs)
 	return res;
 
 error:
+	if (fd >= 0)
+		close(fd);
 	close(dfd);
 	return NULL;
 }
