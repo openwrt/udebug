@@ -1008,7 +1008,11 @@ next_line:
 		cur = next + 1;
 	}
 
-	if (len)
+	if (cur == buf && len == sizeof(buf))
+		/* a single line fills the whole buffer without a terminator;
+		 * drop it to avoid stalling on a zero-length read */
+		len = 0;
+	else if (len)
 		memmove(buf, cur, len);
 	ofs = len;
 	goto read_again;
