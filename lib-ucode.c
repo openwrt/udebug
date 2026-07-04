@@ -782,7 +782,7 @@ uc_udebug_trace_ring(uc_vm_t *vm, size_t nargs)
 	if (dfd < 0)
 		return NULL;
 
-	fd = openat(dfd, "trace_pipe", O_RDONLY);
+	fd = openat(dfd, "trace_pipe", O_RDONLY | O_NONBLOCK);
 	if (fd < 0)
 		goto error;
 
