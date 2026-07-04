@@ -224,6 +224,12 @@ function open_ring(ring, poll) {
 
 function open_trace() {
 	let ring = udebug.trace_ring("udebug-" + readlink("/proc/self"));
+	if (!ring) {
+		_warn(`Failed to open kernel trace buffer\n`);
+		if (!opts.force)
+			exit(1);
+		return;
+	}
 
 	ring.set_file("trace_clock", "tai");
 	ring.set_file("set_event", join("\n", trace_config));
