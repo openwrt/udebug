@@ -786,7 +786,7 @@ uc_udebug_trace_ring(uc_vm_t *vm, size_t nargs)
 	if (fd < 0)
 		goto error;
 
-	res = ucv_resource_create_ex(vm, "udebug.tbuf", (void **)&tr, 1, sizeof(*tr) + strlen(instance + 1));
+	res = ucv_resource_create_ex(vm, "udebug.tbuf", (void **)&tr, 1, sizeof(*tr) + strlen(instance) + 1);
 	if (!res)
 		goto error;
 
