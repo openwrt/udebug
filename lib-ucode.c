@@ -994,7 +994,7 @@ read_again:
 		if (data_ofs >= data_size) {
 			if (!data_size)
 				data_size = 256;
-			else
+			while (data_ofs >= data_size)
 				data_size *= 2;
 			s = snapshot_realloc(s, data_size);
 		}
